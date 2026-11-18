@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 import os
 import sys
+import json
 import uuid
 import time
+import random
 import logging
 from pathlib import Path
 
@@ -27,11 +29,74 @@ from tqdm import tqdm
 from core import config
 from core import ble
 from core.ppppapi import AnkerPPPPApi, FileUploadInfo, PPPP_LAN_PORT, PPPPState, PPPPError
-from core.pppp_packets import Duid, PktLanSearch, PktPunchPkt, FileTransfer
+from core.pppp_packets import Duid, PktLanSearch, PktPunchPkt, FileTransfer, P2PCmdType
 from core.util import patch_gcode_time, split_chunks
 
 logging.basicConfig(level=logging.INFO, format="%(message)s")
 log = logging.getLogger("ankerprint")
+
+
+def _send_xzyh_with_retry(api, data, cmd, reply_timeout=3.0, chan=0, retries=2):
+    attempts = retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return api.send_xzyh(data, cmd=cmd, timeout=reply_timeout)
+        except TimeoutError as exc:
+            is_drw_timeout = "PPPP DRW ACK" in str(exc)
+            if not is_drw_timeout or attempt >= attempts:
+                raise
+            log.warning(f"Retrying handshake send after transport timeout (attempt {attempt + 1}/{attempts})")
+            api.reset_chan_tx(chan=chan)
+
+
+def _pppp_send_file_handshake(api, fui, reply_timeout=3.0):
+    file_uuid = (fui.machine_id or "").strip()
+    if not file_uuid or file_uuid == "-":
+        file_uuid = uuid.uuid4().hex.upper()
+        fui.machine_id = file_uuid
+
+    payload = {
+        "uuid": file_uuid,
+        "device": "ankerprint",
+        "flag": 0,
+        "random": random.getrandbits(64),
+        "timeout": 40,
+        "total_timeout": 120,
+    }
+
+    log.debug("Requesting file transfer handshake...")
+    _send_xzyh_with_retry(
+        api, json.dumps(payload).encode(), cmd=P2PCmdType.P2P_SEND_FILE, reply_timeout=reply_timeout, chan=0
+    )
+
+    try:
+        reply = api.recv_xzyh(chan=0, timeout=reply_timeout)
+    except TimeoutError:
+        reply = None
+
+    if not reply:
+        log.debug("No P2P_SEND_FILE reply; falling back to legacy handshake")
+        api.send_xzyh(file_uuid[:16].encode(), cmd=P2PCmdType.P2P_SEND_FILE, timeout=reply_timeout)
+        return
+
+    if reply.data:
+        code = int.from_bytes(reply.data[:4], "little", signed=False)
+        if code != 0:
+            log.debug(f"P2P_SEND_FILE reply error 0x{code:08x}; falling back to legacy handshake")
+            api.send_xzyh(file_uuid[:16].encode(), cmd=P2PCmdType.P2P_SEND_FILE, timeout=reply_timeout)
+
+
+def _retry_file_transfer_data(api, chunk, pos, reply_timeout=15.0, retries=2):
+    attempts = retries + 1
+    for attempt in range(1, attempts + 1):
+        try:
+            return api.aabb_request(chunk, frametype=FileTransfer.DATA, pos=pos, timeout=reply_timeout)
+        except TimeoutError as exc:
+            is_drw_timeout = "PPPP DRW ACK" in str(exc)
+            if not is_drw_timeout or attempt >= attempts:
+                raise
+            log.warning(f"Retrying file transfer chunk at pos {pos} after transport timeout (attempt {attempt + 1}/{attempts})")
+            api.reset_chan_tx(chan=1)
 
 
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
@@ -134,7 +199,10 @@ def cmd_print(ctx, file, no_act):
         sys.exit(1)
         
     try:
-        rprint("[*] Handshaking and sending file metadata...")
+        rprint("[*] Handshaking with printer file subsystem...")
+        _pppp_send_file_handshake(api, fui, reply_timeout=3.0)
+        
+        rprint("[*] Sending file metadata...")
         api.aabb_request(bytes(fui), frametype=FileTransfer.BEGIN, timeout=15.0)
         
         chunks = split_chunks(patched_data, 1024 * 32)
@@ -143,12 +211,16 @@ def cmd_print(ctx, file, no_act):
         
         with tqdm(unit="b", total=total, unit_scale=True, unit_divisor=1024, desc="Streaming G-code") as bar:
             for chunk in chunks:
-                api.aabb_request(chunk, frametype=FileTransfer.DATA, timeout=15.0)
+                _retry_file_transfer_data(api, chunk, pos, reply_timeout=15.0)
                 pos += len(chunk)
                 bar.update(len(chunk))
                 
         if no_act:
-            rprint("[green]Upload complete (dry run, print not started).[/green]")
+            try:
+                api.aabb_request(b"", frametype=FileTransfer.ABORT, timeout=5.0)
+            except Exception:
+                pass
+            rprint("[green]Upload complete (dry run, transfer closed without starting print).[/green]")
         else:
             rprint("[bold green]File upload complete! Starting print...[/bold green]")
             api.aabb_request(b"", frametype=FileTransfer.END, timeout=15.0)
