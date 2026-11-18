@@ -164,5 +164,32 @@ AnkerPrint includes a unit test suite covering CLI commands, flags, G-code gener
 
 ---
 
+## Platform Compatibility and Caveats
+
+AnkerPrint runs across Linux, native Windows, and Windows Subsystem for Linux (WSL). Because the core tool relies on standard UDP sockets and lightweight Python libraries, behavior is nearly identical across platforms, with a few environment-specific details:
+
+### WSL2 Subnet Isolation on Scan
+- By default, WSL2 uses NAT virtual networking. UDP broadcast packets (`255.255.255.255:32108`) sent from inside WSL2 cannot reach physical Wi-Fi devices on your local subnet unless WSL2 is configured with mirrored networking.
+- If `scan` does not discover printers inside WSL2, add `networkingMode=mirrored` under `[wsl2]` in `C:\Users\<User>\.wslconfig`, or run `scan` once from native Windows PowerShell / CMD to populate `printers.json`. Direct printing and G-code streaming work normally once the printer IP is cached.
+
+### Bluetooth (BLE) in Virtualized Environments
+- BLE features (`ankerprint ble scan / pair / provision`) use the `bleak` library, which communicates directly with host Bluetooth adapters (via WinRT on Windows and BlueZ on Linux).
+- Virtual machines and default WSL2 environments do not have direct access to host Bluetooth adapters without USB passthrough (such as `usbipd-win`). For initial BLE provisioning, run AnkerPrint on native Windows or native Linux.
+
+### Windows Firewall Configuration
+- When running AnkerPrint for the first time on Windows, Windows Defender Firewall may prompt for network permissions when Python binds to an ephemeral UDP port.
+- Allow access on Private networks so printer UDP responses on port 32108 can reach the CLI.
+
+### Native Windows Setup
+- On Linux and WSL, `./setup.sh` automatically initializes the virtual environment.
+- On native Windows, set up the virtual environment manually:
+  ```powershell
+  python -m venv venv
+  .\venv\Scripts\pip install -r requirements.txt
+  python ankerprint.py scan
+  ```
+
+---
+
 ## License
 GNU General Public License v3.0 (GPL-3.0). See [LICENSE](LICENSE) for details.
