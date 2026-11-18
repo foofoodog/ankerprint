@@ -23,7 +23,7 @@ git clone https://github.com/foofoodog/ankerprint.git
 cd ankerprint
 
 # Quick launcher (automatically creates venv and installs dependencies):
-./start.sh
+./setup.sh
 ```
 
 Or manually:
