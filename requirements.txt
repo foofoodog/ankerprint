@@ -1,0 +1,7 @@
+bleak>=0.21.0
+click>=8.0.0
+crcmod>=1.7
+pycryptodomex>=3.20.0
+rich>=13.0.0
+tinyec>=0.4.0
+tqdm>=4.65.0
