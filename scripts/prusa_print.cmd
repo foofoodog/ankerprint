@@ -12,6 +12,12 @@ setlocal enabledelayedexpansion
 set SCRIPT_DIR=%~dp0
 set REPO_DIR=%SCRIPT_DIR%..
 
+:: If standalone executable is compiled
+if exist "%REPO_DIR%\dist\ankerprint.exe" (
+    "%REPO_DIR%\dist\ankerprint.exe" print %*
+    exit /b !errorlevel!
+)
+
 :: If running via native Windows Python venv
 if exist "%REPO_DIR%\venv\Scripts\python.exe" (
     if exist "%REPO_DIR%\ankerprint.py" (

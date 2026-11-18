@@ -9,6 +9,11 @@ venv/
 env/
 ENV/
 
+# Build artifacts & PyInstaller
+build/
+dist/
+*.spec
+
 # Configuration and cache
 .config/
 *.log

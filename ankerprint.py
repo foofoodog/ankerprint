@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 
 # Auto-detect local venv on Linux, WSL, and Windows
-if sys.prefix == sys.base_prefix:
+if not getattr(sys, "frozen", False) and sys.prefix == sys.base_prefix:
     _repo = Path(__file__).resolve().parent
     _candidates = [
         _repo / "venv" / "bin" / "python",

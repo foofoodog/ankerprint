@@ -42,8 +42,10 @@ echo "  AnkerMake LAN Direct Print (Target: Printer $PRINTER_INDEX)"
 echo "  File: $GCODE_FILE"
 echo "========================================================="
 
-# Execute via ankerprint (which automatically uses the virtual environment)
-if [ -f "$REPO_DIR/ankerprint.py" ]; then
+# Execute via standalone binary if compiled, else via ankerprint.py
+if [ -f "$REPO_DIR/dist/ankerprint" ]; then
+    "$REPO_DIR/dist/ankerprint" -p "$PRINTER_INDEX" print "$GCODE_FILE"
+elif [ -f "$REPO_DIR/ankerprint.py" ]; then
     "$REPO_DIR/ankerprint.py" -p "$PRINTER_INDEX" print "$GCODE_FILE"
 elif [ -f "$REPO_DIR/ankerctl.py" ]; then
     "$REPO_DIR/ankerctl.py" -p "$PRINTER_INDEX" print "$GCODE_FILE"
