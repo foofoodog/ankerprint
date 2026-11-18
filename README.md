@@ -4,13 +4,13 @@
 
 Unlike bloated suites that run background web daemons, RTSP video relays, Docker containers, or cloud proxies, AnkerPrint strips away everything non-essential:
 
-* 🚀 **Zero Background Daemons & Zero Servers**: No Flask, no Mosquitto MQTT, no RTSP/OpenCV/FFmpeg video, no Docker. Runs only when invoked.
-* 📶 **Bluetooth Low Energy (BLE) Provisioning**: Scan for unconfigured or factory-reset M5/M5C printers, pair, and configure Wi-Fi credentials directly over Bluetooth.
-* 🔍 **Instant LAN Discovery**: Broadcasts UDP search packets on port `32108` and saves discovered printers automatically.
-* 🖨️ **Direct LAN G-code Streaming**: Direct binary PPPP file upload and print initiation over local UDP.
-* ⏱️ **Automatic Time Patching**: Injects standard `;TIME:<seconds>` metadata into G-code for accurate on-printer countdown display.
-* 🔪 **Slicer Ready**: Native post-processing script integration for **PrusaSlicer**, **OrcaSlicer**, and headless CLI print pipelines.
-* 🪟 **Cross-Platform**: Supports native Linux, WSL (with automatic Windows-to-WSL path translation), and Windows.
+- **Zero Background Daemons & Zero Servers**: No Flask, no Mosquitto MQTT, no RTSP/OpenCV/FFmpeg video, no Docker. Runs only when invoked.
+- **Bluetooth Low Energy (BLE) Provisioning**: Scan for unconfigured or factory-reset M5/M5C printers, pair, and configure Wi-Fi credentials directly over Bluetooth.
+- **Instant LAN Discovery**: Broadcasts UDP search packets on port `32108` and saves discovered printers automatically.
+- **Direct LAN G-code Streaming**: Direct binary PPPP file upload and print initiation over local UDP.
+- **Automatic Time Patching**: Injects standard `;TIME:<seconds>` metadata into G-code for accurate on-printer countdown display.
+- **Slicer Ready**: Native post-processing script integration for **PrusaSlicer**, **OrcaSlicer**, and headless CLI print pipelines.
+- **Cross-Platform**: Supports native Linux, WSL (with automatic Windows-to-WSL path translation), and Windows.
 
 ---
 
@@ -115,8 +115,8 @@ prusa-slicer --export-gcode model.stl -o model.gcode
 
 ## Hardware Control Note (No Cloud/Server Needed)
 Because AnkerPrint does not run a daemon or cloud relay, in-flight pause and cancellation are handled directly on the hardware:
-* **M5C**: Single button press = **Pause / Resume**; 3-second hold = **Cancel Print**.
-* **M5**: Use the built-in touchscreen display to pause, resume, or abort.
+- **M5C**: Single button press = **Pause / Resume**; 3-second hold = **Cancel Print**.
+- **M5**: Use the built-in touchscreen display to pause, resume, or abort.
 
 ---
 
