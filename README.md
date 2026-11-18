@@ -66,6 +66,36 @@ Stream a G-code file directly over LAN UDP to the printer and start the job:
 ./ankerprint.py print -n model.gcode
 ```
 
+### Direct G-code Commands
+
+Send arbitrary G-code commands or common operations directly to the printer over LAN UDP without opening a slicer or web UI:
+
+```bash
+# Home all axes (G28)
+./ankerprint.py gcode --home
+
+# Run auto bed leveling (G29)
+./ankerprint.py gcode --level
+
+# Home specific axes or disable steppers
+./ankerprint.py gcode --home-xy
+./ankerprint.py gcode --home-z
+./ankerprint.py gcode --motors-off
+
+# Send custom G-code command sequences
+./ankerprint.py gcode "G28" "G1 Z25 F1000"
+./ankerprint.py gcode "M104 S210" "M140 S60"
+
+# Target specific printer by index
+./ankerprint.py -p 1 gcode --home
+
+# Dry run: Verify transfer without executing commands
+./ankerprint.py gcode --home -n
+
+# Pipe G-code from standard input
+echo "G28" | ./ankerprint.py gcode -
+```
+
 ### Bluetooth Low Energy (BLE) Wi-Fi Provisioning
 
 Configure a new or factory-reset printer without the mobile app:
@@ -117,6 +147,20 @@ prusa-slicer --export-gcode model.stl -o model.gcode
 Because AnkerPrint does not run a daemon or cloud relay, in-flight pause and cancellation are handled directly on the hardware:
 - **M5C**: Single button press = **Pause / Resume**; 3-second hold = **Cancel Print**.
 - **M5**: Use the built-in touchscreen display to pause, resume, or abort.
+
+---
+
+## Running Tests
+
+AnkerPrint includes a unit test suite covering CLI commands, flags, G-code generation, and network mock workflows:
+
+```bash
+# Run tests with pytest
+./venv/bin/pytest
+
+# Or with python's built-in unittest runner
+./venv/bin/python -m unittest discover tests
+```
 
 ---
 

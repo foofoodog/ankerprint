@@ -99,6 +99,79 @@ def _retry_file_transfer_data(api, chunk, pos, reply_timeout=15.0, retries=2):
             api.reset_chan_tx(chan=1)
 
 
+def _get_target_printer(ctx):
+    printers = config.load_printers()
+    p_idx = ctx.obj.get("printer_index", 0)
+    
+    if not printers:
+        rprint("[yellow]No printers in cache. Running quick scan...[/yellow]")
+        cmd_scan()
+        printers = config.load_printers()
+        
+    if not printers:
+        rprint("[bold red]Error: No printers available on local network.[/bold red]")
+        sys.exit(1)
+        
+    if p_idx < 0 or p_idx >= len(printers):
+        rprint(f"[bold red]Error: Printer index {p_idx} out of range (available: 0..{len(printers)-1})[/bold red]")
+        sys.exit(1)
+        
+    return printers[p_idx]
+
+
+def stream_gcode_to_printer(ip, duid, gcode_bytes, filename="job.gcode", no_act=False, desc="Streaming G-code"):
+    file_uuid = uuid.uuid4().hex.upper()
+    fui = FileUploadInfo.from_data(gcode_bytes, filename, user_name="ankerprint", user_id="-", machine_id=file_uuid)
+    
+    api = AnkerPPPPApi.open_lan(Duid.from_string(duid), host=ip)
+    api.connect_lan_search()
+    api.start()
+    
+    deadline = time.monotonic() + 10.0
+    connected = False
+    while time.monotonic() < deadline:
+        if api.state == PPPPState.Connected:
+            connected = True
+            break
+        time.sleep(0.05)
+        
+    if not connected:
+        rprint(f"[bold red]Error: Could not connect to printer at {ip}:32108.[/bold red]")
+        api.stop()
+        sys.exit(1)
+        
+    try:
+        rprint("[*] Handshaking with printer file subsystem...")
+        _pppp_send_file_handshake(api, fui, reply_timeout=3.0)
+        
+        rprint("[*] Sending file metadata...")
+        api.aabb_request(bytes(fui), frametype=FileTransfer.BEGIN, timeout=15.0)
+        
+        chunks = split_chunks(gcode_bytes, 1024 * 32)
+        pos = 0
+        total = len(gcode_bytes)
+        
+        show_bar = total > 1024
+        with tqdm(unit="b", total=total, unit_scale=True, unit_divisor=1024, desc=desc, disable=not show_bar) as bar:
+            for chunk in chunks:
+                _retry_file_transfer_data(api, chunk, pos, reply_timeout=15.0)
+                pos += len(chunk)
+                if show_bar:
+                    bar.update(len(chunk))
+                
+        if no_act:
+            try:
+                api.aabb_request(b"", frametype=FileTransfer.ABORT, timeout=5.0)
+            except Exception:
+                pass
+            rprint("[green]Upload complete (dry run, transfer closed without executing).[/green]")
+        else:
+            api.aabb_request(b"", frametype=FileTransfer.END, timeout=15.0)
+            rprint("[bold green]Success: Command sent to printer.[/bold green]")
+    finally:
+        api.stop()
+
+
 @click.group(context_settings=dict(help_option_names=["-h", "--help"]))
 @click.option("--printer", "-p", type=int, default=0, help="Printer index (default: 0)")
 @click.pass_context
@@ -154,79 +227,83 @@ def cmd_scan():
 @click.option("--no-act", "-n", is_flag=True, help="Upload only without starting print")
 @click.pass_context
 def cmd_print(ctx, file, no_act):
-    printers = config.load_printers()
-    p_idx = ctx.obj["printer_index"]
-    
-    if not printers:
-        rprint("[yellow]No printers in cache. Running quick scan...[/yellow]")
-        ctx.invoke(cmd_scan)
-        printers = config.load_printers()
-        
-    if not printers:
-        rprint("[bold red]Error: No printers available to print.[/bold red]")
-        sys.exit(1)
-        
-    if p_idx < 0 or p_idx >= len(printers):
-        rprint(f"[bold red]Error: Printer index {p_idx} out of range (available: 0..{len(printers)-1})[/bold red]")
-        sys.exit(1)
-        
-    target = printers[p_idx]
-    ip = target["ip"]
-    duid = target["duid"]
-    
-    rprint(f"[bold blue]Targeting Printer [{p_idx}]: {duid} at {ip}[/bold blue]")
+    target = _get_target_printer(ctx)
+    rprint(f"[bold blue]Targeting Printer [{ctx.obj['printer_index']}]: {target['duid']} at {target['ip']}[/bold blue]")
     raw_data = file.read()
     patched_data = patch_gcode_time(raw_data)
+    stream_gcode_to_printer(
+        target["ip"], target["duid"], patched_data,
+        filename=Path(file.name).name, no_act=no_act, desc="Streaming G-code"
+    )
+
+
+@cli.command("gcode", help="Send G-code command(s) directly to printer (e.g. G28, G29, auto-level)")
+@click.argument("commands", nargs=-1)
+@click.option("--home", is_flag=True, help="Shortcut to home all axes (G28)")
+@click.option("--home-xy", is_flag=True, help="Shortcut to home X and Y axes (G28 X Y)")
+@click.option("--home-z", is_flag=True, help="Shortcut to home Z axis (G28 Z)")
+@click.option("--level", is_flag=True, help="Shortcut to run auto bed leveling (G29)")
+@click.option("--motors-off", is_flag=True, help="Shortcut to disable stepper motors (M84)")
+@click.option("--no-act", "-n", is_flag=True, help="Dry run: upload command without executing")
+@click.pass_context
+def cmd_gcode(ctx, commands, home, home_xy, home_z, level, motors_off, no_act):
+    cmd_list = []
     
-    file_uuid = uuid.uuid4().hex.upper()
-    fui = FileUploadInfo.from_data(patched_data, Path(file.name).name, user_name="ankerprint", user_id="-", machine_id=file_uuid)
-    
-    api = AnkerPPPPApi.open_lan(Duid.from_string(duid), host=ip)
-    api.connect_lan_search()
-    api.start()
-    
-    deadline = time.monotonic() + 10.0
-    connected = False
-    while time.monotonic() < deadline:
-        if api.state == PPPPState.Connected:
-            connected = True
-            break
-        time.sleep(0.05)
+    # Process shortcut flags
+    if home:
+        cmd_list.append("G28")
+    if home_xy:
+        cmd_list.append("G28 X Y")
+    if home_z:
+        cmd_list.append("G28 Z")
+    if level:
+        cmd_list.append("G29")
+    if motors_off:
+        cmd_list.append("M84")
         
-    if not connected:
-        rprint(f"[bold red]Error: Could not connect to printer at {ip}:32108.[/bold red]")
-        api.stop()
-        sys.exit(1)
-        
-    try:
-        rprint("[*] Handshaking with printer file subsystem...")
-        _pppp_send_file_handshake(api, fui, reply_timeout=3.0)
-        
-        rprint("[*] Sending file metadata...")
-        api.aabb_request(bytes(fui), frametype=FileTransfer.BEGIN, timeout=15.0)
-        
-        chunks = split_chunks(patched_data, 1024 * 32)
-        pos = 0
-        total = len(patched_data)
-        
-        with tqdm(unit="b", total=total, unit_scale=True, unit_divisor=1024, desc="Streaming G-code") as bar:
-            for chunk in chunks:
-                _retry_file_transfer_data(api, chunk, pos, reply_timeout=15.0)
-                pos += len(chunk)
-                bar.update(len(chunk))
-                
-        if no_act:
-            try:
-                api.aabb_request(b"", frametype=FileTransfer.ABORT, timeout=5.0)
-            except Exception:
-                pass
-            rprint("[green]Upload complete (dry run, transfer closed without starting print).[/green]")
+    # Process positional arguments or stdin
+    if commands:
+        if len(commands) == 1 and commands[0] == "-":
+            stdin_text = sys.stdin.read()
+            for line in stdin_text.splitlines():
+                line = line.strip()
+                if line and not line.startswith(";"):
+                    cmd_list.append(line)
         else:
-            rprint("[bold green]File upload complete! Starting print...[/bold green]")
-            api.aabb_request(b"", frametype=FileTransfer.END, timeout=15.0)
-            rprint("[bold green]Success: Print started.[/bold green]")
-    finally:
-        api.stop()
+            for c in commands:
+                for line in c.splitlines():
+                    line = line.strip()
+                    if line:
+                        cmd_list.append(line)
+                        
+    if not cmd_list:
+        rprint("[bold yellow]No G-code command provided. Specify commands or options like --home, --level.[/bold yellow]")
+        rprint("Examples:")
+        rprint("  ankerprint gcode --home")
+        rprint("  ankerprint gcode --level")
+        rprint('  ankerprint gcode "G28" "G1 Z10 F1000"')
+        rprint('  ankerprint gcode "M104 S200" "M140 S60"')
+        return
+        
+    target = _get_target_printer(ctx)
+    rprint(f"[bold blue]Targeting Printer [{ctx.obj['printer_index']}]: {target['duid']} at {target['ip']}[/bold blue]")
+    rprint(f"[cyan]Executing G-code:[/cyan] {', '.join(cmd_list)}")
+    
+    # Construct minimal standalone G-code buffer
+    buffer_lines = [
+        "; generated by ankerprint gcode",
+        "; estimated printing time = 10s",
+        ";TIME:10",
+        "G21 ; millimeter units",
+        "G90 ; absolute coordinates",
+    ]
+    buffer_lines.extend(cmd_list)
+    gcode_bytes = ("\n".join(buffer_lines) + "\n").encode("utf-8")
+    
+    stream_gcode_to_printer(
+        target["ip"], target["duid"], gcode_bytes,
+        filename="direct_cmd.gcode", no_act=no_act, desc="Sending G-code"
+    )
 
 
 @cli.group("ble", help="Bluetooth Low Energy (BLE) Wi-Fi tools")
